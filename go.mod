@@ -1,4 +1,4 @@
-module github.com/andesterson/kubectl-patch-all
+module github.com/andesterson/kubectl-patch_all
 
 go 1.24.4
 

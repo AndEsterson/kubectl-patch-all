@@ -5,7 +5,7 @@ import (
   "os"
   "os/signal"
   "syscall"
-  "github.com/andesterson/kubectl-patch-all/pkg/cmd"
+  "github.com/andesterson/kubectl-patch_all/pkg/cmd"
 )
 
 var version = "HEAD"
