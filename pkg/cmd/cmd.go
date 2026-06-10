@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"os"
 
@@ -138,6 +139,9 @@ func (o *PatchAllOptions) runPatch() error {
 	if err != nil {
 		return fmt.Errorf("converting patch to JSON: %w", err)
 	}
+	if err := validatePatchPayload(patchJSON, o.patchType); err != nil {
+		return err
+	}
 	patchType := patchTypes[o.patchType]
 
 	r, err := o.buildResult()
@@ -150,11 +154,29 @@ func (o *PatchAllOptions) runPatch() error {
 		}
 		helper := resource.NewHelper(info.Client, info.Mapping)
 		if _, err := helper.Patch(info.Namespace, info.Name, patchType, patchJSON, nil); err != nil {
-			return fmt.Errorf("patching %s/%s: %w", info.Mapping.Resource.Resource, info.Namespace, info.Name, err)
+			return fmt.Errorf("patching %s/%s/%s: %w", info.Mapping.Resource.Resource, info.Namespace, info.Name, err)
 		}
-		fmt.Fprintf(o.Out, "patched %s/%s\n", info.Mapping.Resource.Resource, info.Namespace, info.Name)
+		fmt.Fprintf(o.Out, "patched %s/%s/%s\n", info.Mapping.Resource.Resource, info.Namespace, info.Name)
 		return nil
 	})
+}
+
+func validatePatchPayload(patchJSON []byte, patchType string) error {
+	if len(patchJSON) == 0 || string(patchJSON) == "null" {
+		return fmt.Errorf("patch file is empty")
+	}
+	if patchType == "json" {
+		var ops []any
+		if err := json.Unmarshal(patchJSON, &ops); err != nil {
+			return fmt.Errorf("--type json requires a JSON array of operations: %w", err)
+		}
+		return nil
+	}
+	var obj map[string]any
+	if err := json.Unmarshal(patchJSON, &obj); err != nil {
+		return fmt.Errorf("--type %s requires a JSON object: %w", patchType, err)
+	}
+	return nil
 }
 
 func Run(ctx context.Context, streams genericiooptions.IOStreams) int {
