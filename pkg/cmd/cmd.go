@@ -2,19 +2,30 @@ package cmd
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"os"
 
 	"github.com/spf13/cobra"
+	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/cli-runtime/pkg/genericclioptions"
 	"k8s.io/cli-runtime/pkg/genericiooptions"
 	"k8s.io/cli-runtime/pkg/resource"
+	"sigs.k8s.io/yaml"
 )
+
+var patchTypes = map[string]types.PatchType{
+	"strategic": types.StrategicMergePatchType,
+	"merge":     types.MergePatchType,
+	"json":      types.JSONPatchType,
+}
 
 type PatchAllOptions struct {
 	configFlags *genericclioptions.ConfigFlags
 	selector    string
 	dryRun      bool
+	patchFile   string
+	patchType   string
 	args        []string
 	genericiooptions.IOStreams
 }
@@ -49,6 +60,10 @@ func NewPatchAllCmd(streams genericiooptions.IOStreams) *cobra.Command {
 		"Selector (label query) to filter on, supports '=', '==', and '!='.")
 	cmd.Flags().BoolVarP(&o.dryRun, "dry-run", "d", false,
 		"Don't patch — just print the resources that would be patched.")
+	cmd.Flags().StringVar(&o.patchFile, "patch-file", "",
+		"Path to a file containing the patch to apply. Required unless --dry-run is set.")
+	cmd.Flags().StringVar(&o.patchType, "type", "strategic",
+		"Patch type: strategic, merge, or json.")
 
 	return cmd
 }
@@ -62,6 +77,12 @@ func (o *PatchAllOptions) Validate() error {
 	if len(o.args) == 0 {
 		return fmt.Errorf("at least one resource type is required (e.g. pods, deploy)")
 	}
+	if _, ok := patchTypes[o.patchType]; !ok {
+		return fmt.Errorf("invalid --type %q (valid: strategic, merge, json)", o.patchType)
+	}
+	if !o.dryRun && o.patchFile == "" {
+		return fmt.Errorf("--patch-file is required (or use --dry-run)")
+	}
 	return nil
 }
 
@@ -69,13 +90,13 @@ func (o *PatchAllOptions) Run() error {
 	if o.dryRun {
 		return o.runDryRun()
 	}
-	return fmt.Errorf("patch operation not yet implemented; rerun with --dry-run to preview matching resources")
+	return o.runPatch()
 }
 
-func (o *PatchAllOptions) runDryRun() error {
+func (o *PatchAllOptions) buildResult() (*resource.Result, error) {
 	ns, _, err := o.configFlags.ToRawKubeConfigLoader().Namespace()
 	if err != nil {
-		return err
+		return nil, err
 	}
 
 	r := resource.NewBuilder(o.configFlags).
@@ -89,9 +110,16 @@ func (o *PatchAllOptions) runDryRun() error {
 		Do()
 
 	if err := r.Err(); err != nil {
+		return nil, err
+	}
+	return r, nil
+}
+
+func (o *PatchAllOptions) runDryRun() error {
+	r, err := o.buildResult()
+	if err != nil {
 		return err
 	}
-
 	return r.Visit(func(info *resource.Info, err error) error {
 		if err != nil {
 			return err
@@ -100,6 +128,55 @@ func (o *PatchAllOptions) runDryRun() error {
 			info.Mapping.Resource.Resource, info.Namespace, info.Name)
 		return nil
 	})
+}
+
+func (o *PatchAllOptions) runPatch() error {
+	raw, err := os.ReadFile(o.patchFile)
+	if err != nil {
+		return fmt.Errorf("reading patch file: %w", err)
+	}
+	patchJSON, err := yaml.YAMLToJSON(raw)
+	if err != nil {
+		return fmt.Errorf("converting patch to JSON: %w", err)
+	}
+	if err := validatePatchPayload(patchJSON, o.patchType); err != nil {
+		return err
+	}
+	patchType := patchTypes[o.patchType]
+
+	r, err := o.buildResult()
+	if err != nil {
+		return err
+	}
+	return r.Visit(func(info *resource.Info, err error) error {
+		if err != nil {
+			return err
+		}
+		helper := resource.NewHelper(info.Client, info.Mapping)
+		if _, err := helper.Patch(info.Namespace, info.Name, patchType, patchJSON, nil); err != nil {
+			return fmt.Errorf("patching %s/%s/%s: %w", info.Mapping.Resource.Resource, info.Namespace, info.Name, err)
+		}
+		fmt.Fprintf(o.Out, "patched %s/%s/%s\n", info.Mapping.Resource.Resource, info.Namespace, info.Name)
+		return nil
+	})
+}
+
+func validatePatchPayload(patchJSON []byte, patchType string) error {
+	if len(patchJSON) == 0 || string(patchJSON) == "null" {
+		return fmt.Errorf("patch file is empty")
+	}
+	if patchType == "json" {
+		var ops []any
+		if err := json.Unmarshal(patchJSON, &ops); err != nil {
+			return fmt.Errorf("--type json requires a JSON array of operations: %w", err)
+		}
+		return nil
+	}
+	var obj map[string]any
+	if err := json.Unmarshal(patchJSON, &obj); err != nil {
+		return fmt.Errorf("--type %s requires a JSON object: %w", patchType, err)
+	}
+	return nil
 }
 
 func Run(ctx context.Context, streams genericiooptions.IOStreams) int {
