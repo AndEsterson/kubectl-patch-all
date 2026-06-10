@@ -150,9 +150,9 @@ func (o *PatchAllOptions) runPatch() error {
 		}
 		helper := resource.NewHelper(info.Client, info.Mapping)
 		if _, err := helper.Patch(info.Namespace, info.Name, patchType, patchJSON, nil); err != nil {
-			return fmt.Errorf("patching %s/%s: %w", info.Mapping.Resource.Resource, info.Name, err)
+			return fmt.Errorf("patching %s/%s: %w", info.Mapping.Resource.Resource, info.Namespace, info.Name, err)
 		}
-		fmt.Fprintf(o.Out, "patched %s/%s\n", info.Mapping.Resource.Resource, info.Name)
+		fmt.Fprintf(o.Out, "patched %s/%s\n", info.Mapping.Resource.Resource, info.Namespace, info.Name)
 		return nil
 	})
 }
