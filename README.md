@@ -15,7 +15,7 @@ This installs the binary to your `$GOPATH`, kubectl autodetects plugins based on
 kubectl patch-all pods --patch-file patch.yaml
 ```
 ```
-# Patch all deploys in the target namespace and context which meet the label selector
+# Patch all deploys which meet the label selector in the target namespace and context
 kubectl patch-all deploys --patch-file patch.yaml --context some-cluster -n some-ns -l some-label=some-value
 ```
 ```
